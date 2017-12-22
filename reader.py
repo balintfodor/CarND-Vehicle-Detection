@@ -2,6 +2,7 @@ import glob
 import sys
 import cv2
 import os
+from skimage.io import imread
 
 class FrameReader(object):
     def __init__(self, file):
@@ -23,14 +24,14 @@ class FrameReader(object):
         while(self.video.isOpened()):
             ret, frame = self.video.read()
             if ret is not None:
-                yield frame
+                yield np.stack((frame[:, :, 2], frame[:, :, 1], frame[:, :, 0]))
         
     def _next_image(self):
         for f in self.images:
-            yield cv2.imread(f)
+            yield imread(f)
 
 def collect_images(folder):
     images = []
     for format in ['jpg', 'png', 'tif']:
-        images.extend(glob.glob("{}/*.{}".format(folder, format)))
+        images.extend(glob.glob("{}/**/*.{}".format(folder, format), recursive=True))
     return images
