@@ -53,6 +53,10 @@ class Trainer(object):
             self.cells_per_block[0], self.cells_per_block[1], self.orientations))
         return hog_map
 
+    def hog_map_coord_to_img(self, i, j):
+        return ((i - 1 + self.cells_per_block[0]) * self.pixels_per_cell[0],
+            (j - 1 + self.cells_per_block[1]) * self.pixels_per_cell[1])
+
     def _preprocess_list(self, samples):
         images = []
         print('preprocess')
