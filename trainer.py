@@ -8,8 +8,10 @@ from skimage.io import imread, imsave
 from skimage.util import view_as_windows
 
 from sklearn.model_selection import train_test_split
-from sklearn.svm import SVC, LinearSVC
+from sklearn.preprocessing import StandardScaler
+from sklearn.svm import SVC, LinearSVC, NuSVC, LinearSVR
 from sklearn.tree import DecisionTreeClassifier, ExtraTreeClassifier
+from sklearn.naive_bayes import GaussianNB
 from sklearn.ensemble import BaggingClassifier, AdaBoostClassifier, RandomForestClassifier, VotingClassifier
 from sklearn.externals import joblib
 
@@ -18,17 +20,16 @@ class Trainer(object):
     def __init__(self, args):
         self.args = args
         self.clf = None
-        self.a = 0
-        self.b = 1
+        self.ss = None
         self.acc = 0
         self.pixels_per_cell = (8, 8)
         self.cells_per_block = (2, 2)
-        self.orientations = 9
+        self.orientations = 5
         self.sample_block_h = 64 // self.pixels_per_cell[0] - self.cells_per_block[0] + 1
         self.sample_block_w = 64 // self.pixels_per_cell[1] - self.cells_per_block[1] + 1
 
     def load(self, file):
-        self.a, self.b, self.clf, self.acc = joblib.load(file)
+        self.ss, self.clf, self.acc = joblib.load(file)
 
     def _load_samples(self, image_list):
         if self.args.test:
@@ -41,7 +42,6 @@ class Trainer(object):
 
     def preprocess(self, image):
         gray = rgb2gray(image)
-        
         hog_map = hog(gray,
             orientations=self.orientations,
             pixels_per_cell=self.pixels_per_cell,
@@ -50,7 +50,7 @@ class Trainer(object):
         blocks_row = image.shape[0] // self.pixels_per_cell[0] - self.cells_per_block[0] + 1
         blocks_col = image.shape[1] // self.pixels_per_cell[1] - self.cells_per_block[1] + 1
         hog_map = hog_map.reshape((blocks_row, blocks_col,
-            self.cells_per_block[0], self.cells_per_block[1], 9))
+            self.cells_per_block[0], self.cells_per_block[1], self.orientations))
         return hog_map
 
     def _preprocess_list(self, samples):
@@ -80,32 +80,32 @@ class Trainer(object):
 
         print(X_train.shape)
 
-        a = np.mean(X_train, axis=0)
-        X_train = X_train - a
-        b = np.std(X_train, axis=0)
-        X_train = X_train / b
+        ss = StandardScaler()
+        ss.fit(X_train)
+
+        X_train = ss.transform(X_train)
+        print(np.min(X_train), np.max(X_train), np.mean(X_train), np.std(X_train))
 
         print('training')
 
-        clf = VotingClassifier(
-            [('et', ExtraTreeClassifier()),
-            ('lsvm', RandomForestClassifier()),
-            ('dt', DecisionTreeClassifier())],
-            voting='soft')
+        clf = LinearSVC(
+            C=self.args.C,
+            dual=True,
+            max_iter = 4000,
+            fit_intercept=True,
+            verbose=1)
 
         clf.fit(X_train, y_train)
 
-        X_test -= a
-        X_test /= b
+        X_test = ss.transform(X_test)
 
         pred = np.c_[clf.predict(X_test) > 0.5, y_test]
         acc = np.sum(pred[:, 0] == pred[:, 1]) / pred.shape[0]
         print('acc=', acc)
 
-        joblib.dump([a, b, clf, acc], 'model.bin')
+        joblib.dump([ss, clf, acc], 'model.bin')
         self.clf = clf
 
     def classify(self, feats):
-        feats -= self.a
-        feats /= self.b
-        return self.clf.predict([feats])
+        feats = self.ss.transform([feats])
+        return self.clf.predict(feats)

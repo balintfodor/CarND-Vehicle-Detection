@@ -31,6 +31,7 @@ class Detector(object):
         hog_map_1 = hog_map_1.reshape((hog_map_1.shape[0], hog_map_1.shape[1], -1))
         maps = [(hog_map_1, 1)]
         for f in [1.5, 2, 3, 4]:
+            imsave('{}/{:02d}-scale-{}.png'.format(out_dir, idx, f), rescale(image, 1/f))
             maps.append((rescale(hog_map_1, 1/f), f))
 
         out = np.zeros((hog_map_1.shape[0], hog_map_1.shape[1]))

@@ -23,6 +23,7 @@ class ArgParser(object):
         parser.add_argument('vehicle_folder', type=str)
         parser.add_argument('non_vehicle_folder', type=str)
         parser.add_argument('--test', action='store_true')
+        parser.add_argument('--C', type=float, default=1.0)
         args = parser.parse_args(sys.argv[2:])
 
         vehicle_images = collect_images(args.vehicle_folder)
