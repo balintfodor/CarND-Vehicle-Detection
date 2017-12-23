@@ -3,6 +3,7 @@ import sys
 import cv2
 import os
 from skimage.io import imread
+import numpy as np
 
 class FrameReader(object):
     def __init__(self, file):
@@ -24,7 +25,9 @@ class FrameReader(object):
         while(self.video.isOpened()):
             ret, frame = self.video.read()
             if ret is not None:
-                yield np.stack((frame[:, :, 2], frame[:, :, 1], frame[:, :, 0]))
+                a = np.stack((frame[:, :, 2], frame[:, :, 1], frame[:, :, 0]), axis=2)
+                # print(a.shape)
+                yield a
         
     def _next_image(self):
         for f in self.images:
