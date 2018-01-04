@@ -148,13 +148,6 @@ class Trainer(object):
             fit_intercept=True,
             verbose=1)
 
-        # clf = AdaBoostClassifier(LinearSVC(
-        #     C=self.args.C,
-        #     dual=True,
-        #     max_iter = 100,
-        #     fit_intercept=True,
-        #     verbose=1), algorithm='SAMME')
-
         clf.fit(X_train, y_train)
 
         X_test = ss.transform(X_test)
@@ -166,6 +159,9 @@ class Trainer(object):
         joblib.dump([ss, clf, acc], 'model.bin')
         self.clf = clf
 
-    def classify(self, feats):
-        feats = self.ss.transform([feats])
+    def classify(self, feats, only_one=True):
+        if only_one:
+            feats = self.ss.transform([feats])
+        else:
+            feats = self.ss.transform(feats)
         return self.clf.predict(feats)
