@@ -6,6 +6,9 @@ from skimage.transform import pyramid_reduce, downscale_local_mean, rescale, res
 import cv2
 
 
+def uint_im(im):
+    return (im * 255).astype(np.uint8)
+
 class Detector(object):
     def __init__(self, trainer, reader, args):
         self.trainer = trainer
@@ -27,11 +30,11 @@ class Detector(object):
     def _detect(self, image):
         feat_map = self.trainer.preprocess(image)
         sws = self.trainer.search_window_size()
-        win = self.sliding_window(feat_map, (sws[0], sws[1]), (sws[0], sws[1]))
+        win = self.sliding_window(feat_map, (sws[0], sws[1]), (1, 1))
         rois = []
         for (ys, ye), (xs, xe) in win:
             pred = self.trainer.classify(feat_map[ys:ye, xs:xe].ravel())
-            xy_s = self.trainer.win_to_img((ys, xs))
+            xy_s = self.trainer.win_to_img((ys - 1, xs - 1))
             xy_e = self.trainer.win_to_img((ye, xe))
             if pred > 0.5:
                 rois.append((xy_s, xy_e, pred[0]))
@@ -41,18 +44,23 @@ class Detector(object):
         return ((s[1]), int(s[0])), (int(e[1]), int(e[0]))
 
     def _process_image(self, image, out_dir, idx):
-        cropped = image[400:656, :, :]
+        cropped = image[368:656, :, :]
         outs = []
-        for scale in np.linspace(1, 4, 16):
-            scaled = rescale(cropped, 1 / scale, order=0, mode='constant')
+        for scale in np.linspace(1, 3, 4):
+            scaled = rescale(cropped, 1 / scale, order=1, mode='constant')
             rois = self._detect(scaled)
             for s, e, pred in rois:
                 p1, p2 = self._coord_to_tuple(s, e)
-                print(pred)
-                cv2.rectangle(scaled, p1, p2, (1 - pred, pred, 0), -1)
-                cv2.rectangle(scaled, p1, p2, (1, 1, 0), 2)
-                back_scaled = resize(scaled, cropped.shape, mode='constant')
-                outs.append(back_scaled)
-        outs = np.array(outs)
-        out = np.mean(outs, axis=0)
-        imsave('{}/{:02d}.png'.format(out_dir, idx), out)
+                cv2.rectangle(scaled, p1, 
+                    (int(p2[0] * pred + p1[0] * (1-pred)), int(p1[1] + 8)),
+                    (1 - pred, pred, 0), -1)
+                cv2.rectangle(scaled, p1, p2, (1, 1, 0), 1)
+            imsave('{}/{:02d}-{}.png'.format(out_dir, idx, scale), uint_im(scaled))
+            back_scaled = resize(scaled, cropped.shape, mode='constant', order=0)
+            outs.append(back_scaled)
+        if len(outs) > 0:
+            outs = np.array(outs)
+            out = np.mean(outs, axis=0)
+            imsave('{}/{:02d}.png'.format(out_dir, idx), uint_im(out))
+        else:
+            imsave('{}/{:02d}.png'.format(out_dir, idx), uint_im(cropped))

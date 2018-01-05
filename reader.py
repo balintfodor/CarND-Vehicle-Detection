@@ -26,7 +26,6 @@ class FrameReader(object):
             ret, frame = self.video.read()
             if ret is not None:
                 a = np.stack((frame[:, :, 2], frame[:, :, 1], frame[:, :, 0]), axis=2)
-                # print(a.shape)
                 yield a
         
     def _next_image(self):
