@@ -24,7 +24,7 @@ class FrameReader(object):
     def _next_video_frame(self):
         while(self.video.isOpened()):
             ret, frame = self.video.read()
-            if ret is not None:
+            if frame is not None:
                 a = np.stack((frame[:, :, 2], frame[:, :, 1], frame[:, :, 0]), axis=2)
                 yield a
         
