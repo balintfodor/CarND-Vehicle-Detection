@@ -27,6 +27,8 @@ class FrameReader(object):
             if frame is not None:
                 a = np.stack((frame[:, :, 2], frame[:, :, 1], frame[:, :, 0]), axis=2)
                 yield a
+            else:
+                break
         
     def _next_image(self):
         for f in self.images:

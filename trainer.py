@@ -9,9 +9,10 @@ import os
 from skimage.color import rgb2gray, rgb2hsv, rgb2yuv
 from skimage.feature import hog
 from skimage.io import imread, imsave
-from skimage.util import view_as_windows
+from skimage.util import view_as_windows, view_as_blocks
 from skimage.exposure import rescale_intensity, equalize_hist, equalize_adapthist
 from skimage.transform import resize
+from skimage.filters import sobel
 
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
@@ -30,25 +31,28 @@ class Trainer(object):
         
         self.clf = None
         self.ss = None
-        self.acc = 0
+        self.sample_feat_shape = None
 
         self.sample_size = (64, 64)
         self.pixels_per_cell = (16, 16)
         self.cells_per_block = (2, 2)
         self.orientations = 11
-        self.color_hist_bins = 11
-        
-    def search_window_size(self):
-        return self.img_to_win(self.sample_size)
+        self.color_hist_bins = 17
 
-    def img_to_win(self, im_size):
-        return tuple(im_size[i] // self.pixels_per_cell[i] - self.cells_per_block[i] + 1 for i in range(2))
+    def slide_feat_map(self, feat_map, step=1):
+        wins = view_as_windows(feat_map, window_shape=self.sample_feat_shape, step=step)
+        ss0, ss1 = self.sample_size
+        ppc0, ppc1 = self.pixels_per_cell
+        blocks = []
+        for i in range(wins.shape[0]):
+            for j in range(wins.shape[1]):
+                coords = (i * ppc1, i * ppc1 + ss1, j * ppc0, j * ppc0 + ss0)
+                blocks.append((wins[i, j], coords))
+        return blocks
 
-    def win_to_img(self, yx):
-        return tuple((yx[k] - 1 + self.cells_per_block[k]) * self.pixels_per_cell[k] for k in range(2))
 
     def load(self, file):
-        self.ss, self.clf, self.acc = joblib.load(file)
+        self.ss, self.clf, self.sample_feat_shape = joblib.load(file)
 
     def _load_samples(self, image_list):
         if self.args.test:
@@ -57,8 +61,6 @@ class Trainer(object):
         images = []
         for f in tqdm(image_list):
             im = imread(f)
-            im = rescale_intensity(im)
-
             im_flipped = im[:, ::-1, :]
             images.append(im)
             images.append(im_flipped)
@@ -70,76 +72,80 @@ class Trainer(object):
             pixels_per_cell=self.pixels_per_cell,
             cells_per_block=self.cells_per_block,
             block_norm='L2-Hys',
-            transform_sqrt=False)
-        blocks_row, blocks_col = self.img_to_win(gray.shape[:2])
-        hog_map = hog_map.reshape((blocks_row, blocks_col, -1))
+            transform_sqrt=True,
+            feature_vector=False)
+        hog_map = hog_map.reshape((hog_map.shape[0], hog_map.shape[1], -1))
         return hog_map
 
-    def image_to_hog_map(self, image):
-        yuv = rgb2yuv(image)
-        hm_y = self._hog_map(yuv[:, :, 0])
-        hm_u = self._hog_map(yuv[:, :, 1])
-        hm_v = self._hog_map(yuv[:, :, 2])
-        feat_map = np.concatenate((hm_y, hm_u, hm_v), axis=2)
-        return feat_map, yuv
+    def _hist_map(self, gray, ranges=[0, 1]):
+        gray = np.copy(gray)
+        win_shape = (self.pixels_per_cell[1] * self.cells_per_block[1],
+            self.pixels_per_cell[0] * self.cells_per_block[0])
+        step = (self.pixels_per_cell[1], self.pixels_per_cell[0])
+        blocks = view_as_windows(gray,
+            window_shape=win_shape,
+            step=step)
+        hist_map = np.empty((blocks.shape[0], blocks.shape[1], 4 * self.color_hist_bins), dtype=gray.dtype)
+        for i in range(blocks.shape[0]):
+            for j in range(blocks.shape[1]):
+                block = np.copy(blocks[i, j]).astype(np.float64)
+                hist = np.histogram(block, bins=self.color_hist_bins, range=ranges)[0].astype(np.float64)
 
-    def image_to_vector(self, sample_yuv_image, sample_hog_map):
-        hog_vec = sample_hog_map.ravel()
-        eq = rescale_intensity(sample_yuv_image)
-        hist_vec = []
-        ranges = [[0, 1], [-0.5, 0.5], [-0.5, 0.5]]
+                hist /= np.linalg.norm(hist)
+                hist = np.maximum(0.2, hist)
+                hist /= np.linalg.norm(hist)
+
+                hist_sorted = np.sort(hist)
+
+                block_grad = sobel(block)
+                grad_hist = np.histogram(block_grad, bins=self.color_hist_bins, range=ranges)[0].astype(np.float64)
+
+                grad_hist /= np.linalg.norm(grad_hist)
+                grad_hist = np.maximum(0.2, grad_hist)
+                grad_hist /= np.linalg.norm(grad_hist)
+
+                grad_hist_sorted = np.sort(grad_hist)
+
+                hist_map[i, j] = np.concatenate((hist, hist_sorted, grad_hist, grad_hist_sorted), axis=0)
+        return hist_map
+
+    def image_to_feat_map(self, image):
+        col_conv = rgb2hsv(image)
+        feat_layers = []
         for i in range(3):
-            hist, _ = np.histogram(eq[:, :, i], bins=self.color_hist_bins, range=ranges[i])
-            hist_sorted = np.sort(hist)
-            hist_vec.append(hist)
-            hist_vec.append(hist_sorted)
-            for j in range(0, 64, 16):
-                for k in range(0, 64, 16):
-                    patch = eq[j:(j+16), k:(k+16), :]
-                    p_hist, _ = np.histogram(patch[:, :, i], bins=self.color_hist_bins, range=ranges[i])
-                    p_hist_sorted = np.sort(p_hist)
-                    hist_vec.append(p_hist)
-                    hist_vec.append(p_hist_sorted)
+            hist_layer = self._hist_map(col_conv[:, :, i])
+            hog_layer = self._hog_map(col_conv[:, :, i])
+            feat_layers.append(hist_layer)
+            feat_layers.append(hog_layer)
+        feat_map = np.concatenate(feat_layers, axis=2)
+        return feat_map
 
-        hist_vec = np.array(hist_vec).ravel().astype(np.float64)
-        vec = np.concatenate((hog_vec, hist_vec), axis=0)
-        return vec
-
-    def _batch_image_to_hog_map(self, samples):
-        hogs = []
-        yuvs = []
-        print('preprocess: _batch_image_to_hog_map')
+    def _batch_image_to_feat_map(self, samples):
+        feats = []
         for image in tqdm(samples):
-            hog, yuv = self.image_to_hog_map(image)
-            hogs.append(hog)
-            yuvs.append(yuv)
-        return np.array(hogs), np.array(yuvs)
-
-    def _batch_image_to_vector(self, sample_yuv_images, sample_hog_maps):
-        vectors = []
-        n = len(sample_yuv_images)
-        print('preprocess: _batch_image_to_vector')
-        for i in tqdm(range(n)):
-            vectors.append(self.image_to_vector(sample_yuv_images[i], sample_hog_maps[i]))
-        return np.array(vectors)
+            feat = self.image_to_feat_map(image)
+            feats.append(feat)
+        return np.array(feats)
 
     def train(self, vehicle_images, non_vehicle_images):
         if os.path.exists('preprocessed.bin'):
             print('loading preprocessed.bin')
-            X_train, X_test, y_train, y_test = joblib.load('preprocessed.bin')
+            X_train, X_test, y_train, y_test, self.sample_feat_shape = joblib.load('preprocessed.bin')
         else:
             print('vehicle samples')
             v_im = self._load_samples(vehicle_images)
             print('non-vehicle samples')
             nv_im = self._load_samples(non_vehicle_images)
             sample_images = np.r_[v_im, nv_im]
-            sample_hog_maps, sample_yuvs = self._batch_image_to_hog_map(sample_images)
-            sample_vectors = self._batch_image_to_vector(sample_yuvs, sample_hog_maps)
+            print('preprocess')
+            sample_feat_maps = self._batch_image_to_feat_map(sample_images)
+            self.sample_feat_shape = sample_feat_maps.shape[1:]
+            sample_feat_maps = sample_feat_maps.reshape((sample_feat_maps.shape[0], -1))
 
             labels = np.hstack((np.ones(v_im.shape[0]), np.zeros(nv_im.shape[0])))
-            X_train, X_test, y_train, y_test = train_test_split(sample_vectors, labels, shuffle=True, test_size=0.2)
+            X_train, X_test, y_train, y_test = train_test_split(sample_feat_maps, labels, shuffle=True, test_size=0.2)
 
-            joblib.dump([X_train, X_test, y_train, y_test], 'preprocessed.bin')
+            joblib.dump([X_train, X_test, y_train, y_test, self.sample_feat_shape], 'preprocessed.bin')
 
         print('X_train.shape=', X_train.shape)
 
@@ -157,14 +163,19 @@ class Trainer(object):
             fit_intercept=True,
             verbose=1)
 
+        clf = BaggingClassifier(clf, n_estimators=5, max_samples=1, max_features=0.2)
+
         clf.fit(X_train, y_train)
 
         X_test = ss.transform(X_test)
 
-        acc = clf.score(X_test, y_test)
-        print('acc=', acc)
+        train_acc = clf.score(X_train, y_train)
+        test_acc = clf.score(X_test, y_test)
+        print('')
+        print('train acc=', train_acc)
+        print('test acc=', test_acc)
 
-        joblib.dump([ss, clf, acc], 'model.bin')
+        joblib.dump([ss, clf, self.sample_feat_shape], 'model.bin')
         print('saved to model.bin')
         self.clf = clf
 
@@ -175,10 +186,6 @@ class Trainer(object):
         plt.scatter(b, range(b.shape[0]), color='b')
         plt.show()
 
-    def classify(self, feats, only_one=True):
-        if only_one:
-            feats = self.ss.transform([feats])
-        else:
-            feats = self.ss.transform(feats)
-        return sigmoid(self.clf.decision_function(feats))
-        # return self.clf.decision_function(feats)
+    def classify(self, feats):
+        feats = self.ss.transform([feats.ravel()])
+        return sigmoid(self.clf.decision_function(feats))[0]
