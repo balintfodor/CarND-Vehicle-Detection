@@ -10,7 +10,8 @@ from skimage.color import rgb2gray, rgb2hsv, rgb2yuv
 from skimage.feature import hog
 from skimage.io import imread, imsave
 from skimage.util import view_as_windows
-from skimage.exposure import rescale_intensity
+from skimage.exposure import rescale_intensity, equalize_hist, equalize_adapthist
+from skimage.transform import resize
 
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
@@ -35,7 +36,7 @@ class Trainer(object):
         self.pixels_per_cell = (16, 16)
         self.cells_per_block = (2, 2)
         self.orientations = 11
-        self.color_hist_bins = 9
+        self.color_hist_bins = 11
         
     def search_window_size(self):
         return self.img_to_win(self.sample_size)
@@ -80,41 +81,46 @@ class Trainer(object):
         hm_u = self._hog_map(yuv[:, :, 1])
         hm_v = self._hog_map(yuv[:, :, 2])
         feat_map = np.concatenate((hm_y, hm_u, hm_v), axis=2)
-        return feat_map
+        return feat_map, yuv
 
-    def image_to_vector(self, sample_hsv_image, sample_hog_map):
+    def image_to_vector(self, sample_yuv_image, sample_hog_map):
         hog_vec = sample_hog_map.ravel()
-        hsv = sample_hsv_image
-        # hsv = rgb2hsv(sample_image)
+        eq = rescale_intensity(sample_yuv_image)
+        hist_vec = []
+        ranges = [[0, 1], [-0.5, 0.5], [-0.5, 0.5]]
+        for i in range(3):
+            hist, _ = np.histogram(eq[:, :, i], bins=self.color_hist_bins, range=ranges[i])
+            hist_sorted = np.sort(hist)
+            hist_vec.append(hist)
+            hist_vec.append(hist_sorted)
+            for j in range(0, 64, 16):
+                for k in range(0, 64, 16):
+                    patch = eq[j:(j+16), k:(k+16), :]
+                    p_hist, _ = np.histogram(patch[:, :, i], bins=self.color_hist_bins, range=ranges[i])
+                    p_hist_sorted = np.sort(p_hist)
+                    hist_vec.append(p_hist)
+                    hist_vec.append(p_hist_sorted)
 
-        hue = hsv[:, :, 0]
-        hue_hist, _ = np.histogram(hue, bins=self.color_hist_bins, range=(0, 1))
-        hue_hist = np.sort(hue_hist)
-
-        sat = hsv[:, :, 1]
-        sat_hist, _ = np.histogram(sat, bins=self.color_hist_bins, range=(0, 1))
-        sat_hist_sorted = np.sort(sat_hist)
-
-        val = hsv[:, :, 2]
-        val_hist, _ = np.histogram(val, bins=self.color_hist_bins, range=(0, 1))
-        val_hist_sorted = np.sort(val_hist)
-
-        feat_vec = np.concatenate((hog_vec, hue_hist, sat_hist, val_hist, sat_hist_sorted, val_hist_sorted), axis=0)
-        return feat_vec
+        hist_vec = np.array(hist_vec).ravel().astype(np.float64)
+        vec = np.concatenate((hog_vec, hist_vec), axis=0)
+        return vec
 
     def _batch_image_to_hog_map(self, samples):
-        images = []
+        hogs = []
+        yuvs = []
         print('preprocess: _batch_image_to_hog_map')
         for image in tqdm(samples):
-            images.append(self.image_to_hog_map(image))
-        return np.array(images)
+            hog, yuv = self.image_to_hog_map(image)
+            hogs.append(hog)
+            yuvs.append(yuv)
+        return np.array(hogs), np.array(yuvs)
 
-    def _batch_image_to_vector(self, sample_images, sample_hog_maps):
+    def _batch_image_to_vector(self, sample_yuv_images, sample_hog_maps):
         vectors = []
-        n = len(sample_images)
+        n = len(sample_yuv_images)
         print('preprocess: _batch_image_to_vector')
         for i in tqdm(range(n)):
-            vectors.append(self.image_to_vector(sample_images[i], sample_hog_maps[i]))
+            vectors.append(self.image_to_vector(sample_yuv_images[i], sample_hog_maps[i]))
         return np.array(vectors)
 
     def train(self, vehicle_images, non_vehicle_images):
@@ -127,8 +133,8 @@ class Trainer(object):
             print('non-vehicle samples')
             nv_im = self._load_samples(non_vehicle_images)
             sample_images = np.r_[v_im, nv_im]
-            sample_hog_maps = self._batch_image_to_hog_map(sample_images)
-            sample_vectors = self._batch_image_to_vector(sample_images, sample_hog_maps)
+            sample_hog_maps, sample_yuvs = self._batch_image_to_hog_map(sample_images)
+            sample_vectors = self._batch_image_to_vector(sample_yuvs, sample_hog_maps)
 
             labels = np.hstack((np.ones(v_im.shape[0]), np.zeros(nv_im.shape[0])))
             X_train, X_test, y_train, y_test = train_test_split(sample_vectors, labels, shuffle=True, test_size=0.2)
@@ -175,3 +181,4 @@ class Trainer(object):
         else:
             feats = self.ss.transform(feats)
         return sigmoid(self.clf.decision_function(feats))
+        # return self.clf.decision_function(feats)

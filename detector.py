@@ -3,7 +3,7 @@ from tqdm import tqdm
 
 from skimage.io import imsave
 from skimage.transform import pyramid_reduce, downscale_local_mean, rescale, resize
-from skimage.exposure import rescale_intensity
+from skimage.exposure import rescale_intensity, equalize_adapthist
 from skimage.color import rgb2hsv
 import cv2
 
@@ -30,8 +30,7 @@ class Detector(object):
             self._process_image(image, out_dir, idx)
 
     def _detect(self, image):
-        feat_map = self.trainer.image_to_hog_map(image)
-        hsv_image = rgb2hsv(image)
+        feat_map, yuv_map = self.trainer.image_to_hog_map(image)
         sws = self.trainer.search_window_size()
         win = self.sliding_window(feat_map, (sws[0], sws[1]), (1, 1))
         rois = []
@@ -39,13 +38,13 @@ class Detector(object):
             xy_s = self.trainer.win_to_img((ys - 1, xs - 1))
             xy_e = self.trainer.win_to_img((ye, xe))
 
-            hsv_patch = hsv_image[xy_s[0]:xy_e[0], xy_s[1]:xy_e[1]]
+            yuv_patch = yuv_map[xy_s[0]:xy_e[0], xy_s[1]:xy_e[1]]
             feat_patch = feat_map[ys:ye, xs:xe]
 
-            vec = self.trainer.image_to_vector(hsv_patch, feat_patch)
+            vec = self.trainer.image_to_vector(yuv_patch, feat_patch)
             pred = self.trainer.classify(vec)
             
-            if pred > 0.5:
+            if pred > 0.6:
                 rois.append((xy_s, xy_e, pred[0]))
         return rois
 
@@ -57,9 +56,8 @@ class Detector(object):
 
         outs = []
         roi_list = []
-        for scale in np.linspace(1, 4, 6):
+        for scale in np.linspace(1, 4, 8):
             scaled = rescale(cropped, 1 / scale, order=1, mode='constant')
-            scaled = rescale_intensity(scaled)
             rois = self._detect(scaled)
             for s, e, pred in rois:
                 p1, p2 = self._coord_to_tuple(s, e)
@@ -90,7 +88,7 @@ class Detector(object):
             cv2.putText(cropped, '{:.4f}'.format(roi[4]), (p1[0]+2, p2[1]-2), font, 0.33, (255, 0, 0))
         imsave('{}/{:02d}.png'.format(out_dir, idx), cropped)
 
-    def _select_final_rois(self, roi_list, overlap_th=0.3, min_sum_score=0.99):
+    def _select_final_rois(self, roi_list, overlap_th=1, min_sum_score=0.5):
         boxes = np.array(roi_list)
 
          # code based on: https://www.pyimagesearch.com/2015/02/16/faster-non-maximum-suppression-python/
