@@ -25,14 +25,14 @@ The final video is here: [https://youtu.be/83jDCytB8Ek](https://youtu.be/83jDCyt
 
 #### 1. Explain how (and identify where in your code) you extracted HOG features from the training images.
 
-The projects exists basicly 4 files:
+The project exists basically 4 files:
 
-* `pipeline.py` - contains the program argument paramter parsing and routes the execution either to trainer.py or detector.py
-* `trainer.py` - represents the training phase, collects the vehicle/non-vehicle sample images, preprocesses the (stores the preprocessed sample set in a file), builds an trains the classifier (and stores the classifier in a file)
-* `detector.py` - represents the detection phase, loads the trained model from file, generates the sliding windows in several scales, calls the trainer for classification, merges the resulting overlapping windows and eliminates the potentially false positive ones
+* `pipeline.py` - contains the program argument parameter parsing and routes the execution either to trainer.py or detector.py
+* `trainer.py` - represents the training phase, collects the vehicle/non-vehicle sample images, preprocesses the (stores the preprocessed sample set in a file), builds and trains the classifier (and stores the classifier in a file)
+* `detector.py` - represents the detection phase, loads the trained model from a file, generates the sliding windows in several scales, calls the trainer for classification, merges the resulting overlapping windows and eliminates the potentially false positive ones
 * `reader.py` - helper functions to load images from a folder or load image frames from a video
 
-Feature extrection is implemented in `Trainer.image_to_feat_map` (`trainer.py`) which calls `Trainer._hist_map` and `Trainer._hog_map`. First the input image is converted to YUV colorspace. U and V channels are shifted with +0.5 to have their range in [0, 1].
+Feature extraction is implemented in `Trainer.image_to_feat_map` (`trainer.py`) which calls `Trainer._hist_map` and `Trainer._hog_map`. First, the input image is converted to YUV colorspace. U and V channels are shifted with +0.5 to have their range in [0, 1].
 
 Three HOG maps are generated based on all the channels (Y,U,V). The final parameters for the HOG are:
 
@@ -42,19 +42,19 @@ Three HOG maps are generated based on all the channels (Y,U,V). The final parame
 * `block_norm = 'L2-Hys'`
 * `transform_sqrt = False`
 
-The color histogram parameters are also extracted channel-by-channel. For a channel sliding windows of size `pixels_per_cell * cells_per_block` with step `pixels_per_cell` generated and the histogram is calculated. The final number of bins are `color_hist_bins = 17`. Note that the blocks for the color histogram generation matches the blocks used in the HOG map generation.
+The color histogram parameters are also extracted channel-by-channel. For a channel sliding windows of size `pixels_per_cell * cells_per_block` with step `pixels_per_cell` generated and the histogram is calculated. The final number of bins are `color_hist_bins = 17`. Note that the blocks for the color histogram generation match the blocks used in the HOG map generation.
 
 The histogram for a block is normalized using the L2-Hys method (`trainer.py:94`). Then the histogram values are sorted. Both the original histogram and the sorted one is stored in the feature vector. The idea behind the sorted histogram is to drop the notion of the exact values but enable the system to compare the ratio between the most populated bin and the second most populated one for example. It turned out the concatenating the sorted histogram to the feature vector raises the test accuracy.
 
 So, as the HOG map and the color hist map has the same 2d dimensionality (but differs in the depth dimensionality) they can be stacked to form a 2d feature map. The final feature map is `NxMx336` (`336 = 2*2 * 11 * 3 + 2*2 * 17 * 3`, `2*2` for the block and `3` for the channels). Based on a `64x64` sample image a `3x3x336=3024` feature vector is generated.
 
-In the training phase the sample vectors are collected the training set is feaure dimensions are scaled (`trainer.py:154`) with `StandaredScaler` (and its parameters are stored for use on the test set or in detection phase).
+In the training phase, the sample vectors are collected, the training set is scaled (`trainer.py:154`) with `StandaredScaler` (and its parameters are stored for use on the test set or in detection phase).
 
 #### 2. Explain how you settled on your final choice of HOG parameters.
 
-I tried a bunch of approaches with several parameters before getting to an acceptable result with this HOG-color hist feature generation. With a trial error method I found that choosing `16x16` for `pixels_per_cell` produces better result than `8x8`. Also I found that choosing `3x3` for `cells_per_block` don't give better results than `2x2`.
+I tried a bunch of approaches with several parameters before getting to an acceptable result with this HOG-color hist feature generation. With a trial error method, I found that choosing `16x16` for `pixels_per_cell` produces a better result than `8x8`. Also, I found that choosing `3x3` for `cells_per_block` don't give better results than `2x2`.
 
-I also played with the other parameters like `block_norm` and `transform_sqrt`. L2-Hys performed the best for `block_norm`, and after converting the image into YUV `transform_sqrt` always generated 'invalid values' (NaN) warning, so I swithed it of. (Interestingly, using HSV it didn't generated the warning.)
+I also played with the other parameters like `block_norm` and `transform_sqrt`. L2-Hys performed the best for `block_norm`, and after converting the image into YUV `transform_sqrt` always generated 'invalid values' (NaN) warning, so I switched it off. (Interestingly, using HSV it didn't generate the warning.)
 
 #### 3. Describe how (and identify where in your code) you trained a classifier using your selected HOG features (and color features if you used them).
 
@@ -64,10 +64,10 @@ I tried several classifiers: SVC, LinearSVC, NuSVC, DecisionTreeClassifier, Extr
 
 I concluded with the followings:
 
-* the quality and the type of the feature vectors is the most influential thing and a bad feature vectors can not be classified well no matter how complex classifier I use
+* the quality and the type of the feature vectors is the most influential thing and bad feature vectors can not be classified well no matter how complex classifier I use
 * other then `LinearSVC` the classifiers run really slowly (on my computer) and has much more tunable parameters
 
-Finally I chose `LinearSVC`. For the classification I wanted to have a [0,1] value to represent some kind of confidence. `LinearSVC` don't support it out of the box, so I used its `LinearSVC.decision_function` and put the value in a sigmoid function. Shifting the comparison from 0.5 I can tune the algorithm to be more permissive or strict when classifying low-confidence samples.
+Finally, I chose `LinearSVC`. For the classification, I wanted to have a [0,1] value to represent some kind of confidence. `LinearSVC` don't support it out of the box, so I used its `LinearSVC.decision_function` and put the value in a sigmoid function. Shifting the comparison from 0.5 I can tune the algorithm to be more permissive or strict when classifying low-confidence samples.
 
 I chose a random fraction of 0.2 from the vehicle/non-vehicle samples to be the test set. The final accuracy measures:
 
@@ -81,21 +81,21 @@ I chose a random fraction of 0.2 from the vehicle/non-vehicle samples to be the 
 `detector.py:43`
 `trainer.py:42`
 
-First I drop the irrelevant parts of the image. It results in an `1280x288` wide image. I found out that scaling down with the fraction that goes from 1 to 1/4 in 8 steps gives a good result. So the sliding window search runs on 8 different scaled images. For scale a region is calculated to reduce the number of windows - for the smaller car (farther) detections only the upper part of the image is used, for the bigger car detections (closer) the whole `1280x288` image is used.
+First I drop the irrelevant parts of the image. It results in a `1280x288` wide image. I found out that scaling down with the fraction that goes from 1 to 1/4 in 8 steps gives a good result. So the sliding window search runs on 8 different scaled images. For scale a region is calculated to reduce the number of windows - for the smaller car (farther) detections only the upper part of the image is used, for the bigger car detections (closer) the whole `1280x288` image is used.
 
-For every scaling a feature map generation is run resulting in an `NxMx336` feature map. The size of a training sample in *feature map dimensions* is stored at training phase. This is the size of the window we should slide through the feature map with. I chose step=1 since it is already means 16 pixels in the original image dimesnions.
+For every scaling a feature map generation is run resulting in a `NxMx336` feature map. The size of a training sample in *feature map dimensions* is stored at training phase. This is the size of the window we should slide through the feature map with. I chose step=1 since it already means 16 pixels in the original image dimensions.
 
-For every window position a prediction value ([0, 1]) and a rect coordinate is given. I collect only the rectangles with higher than 0.5 prediction value and scale the coordinates back to match with the original image (1280x288) scale.
+For every window position, a prediction value ([0, 1]) and a rect coordinate is given. I collect only the rectangles with higher than 0.5 prediction value and scale the coordinates back to match with the original image (1280x288) scale.
 
-I also used asymetric scaling for the x and y dimensions to result search widows that are not squares but rectangles that maybe better suits for cars seen from side.
+I also used asymmetric scaling for the x and y dimensions to result in search windows that are not squares but rectangles that may be better suited for cars seen from the side.
 
 #### 2. Show some examples of test images to demonstrate how your pipeline is working.  What did you do to optimize the performance of your classifier?
 
-The image below shows raw result of sliding window search for all the scales. The bottom left corder of the green rectangles show the confidence score for the detection. For optimizing the search I cropped the full sized image and restricted the searching are based on the image scaling.
+The image below shows a raw result of sliding window search for all the scales. The bottom left corner of the green rectangles show the confidence score for the detection. For optimizing the search I cropped the full-sized image and restricted the searching are based on the image scaling.
 
 ![](assets/0000.png)
 
-After running `Detector._select_final_rois` (`detector.py:63`) the values show the accumulated confidence scores and the merged rectanges.
+After running `Detector._select_final_rois` (`detector.py:63`) the values show the accumulated confidence scores and the merged rectangles.
 
 ![](assets/0000-final.png)
 
@@ -115,7 +115,7 @@ Having search window positions from every scale I chose to use the overlapping w
 
 The overlapping threshold is 0.4 to merge the rectangles with. The merged windows accumulate the confidence score for the final window based on the original window prediction confidences. I filter out the final windows with lower than 3.0 accumulated score. The overlapping windows are also averaged in coordinates.
 
-Seciton 2. contains the images showing example of the multiple window elimination.
+Section 2. contains the images showing an example of the multiple window elimination.
 
 ---
 
