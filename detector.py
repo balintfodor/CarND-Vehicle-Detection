@@ -27,7 +27,7 @@ class Detector(object):
         rois = []
         for patch, (ys, ye, xs, xe) in blocks:
             pred = self.trainer.classify(patch.ravel())
-            if pred > 0.3:
+            if pred > 0.5:
                 s = (ys, xs)
                 e = (ye, xe)
                 rois.append((s, e, pred))
@@ -39,23 +39,28 @@ class Detector(object):
     def _process_image(self, image, out_dir, idx):
         cropped = image[368:656, :, :]
         roi_list = []
-        for scale in np.linspace(1, 4, 8):
-            scaled = rescale(cropped, 1 / scale, order=1, mode='constant')
-            rois = self._detect(scaled)
-            for s, e, pred in rois:
-                roi_param = np.array([s[0], s[1], e[0], e[1], pred]).ravel()
-                roi_param[:4] *= scale
-                roi_list.append(roi_param)
+        n = 8
+        for scale, crop_y in zip(np.linspace(1, 4, n), np.linspace(96, 656-368, n)):
+                skew = 1.3
+                narrowed = cropped[:int(crop_y), :, :]
+                factor = (1 / scale, 1 / scale / skew)
+                scaled = rescale(narrowed, factor, order=1, mode='constant')
+                rois = self._detect(scaled)
+                for s, e, pred in rois:
+                    roi_param = np.array([s[0], s[1], e[0], e[1], pred]).ravel()
+                    roi_param[[0, 2]] *= 1 / factor[0]
+                    roi_param[[1, 3]] *= 1 / factor[1]
+                    roi_list.append(roi_param)
 
         final_rois = self._select_final_rois(roi_list)
         for roi in final_rois:
             p1, p2 = self._coord_to_tuple(roi[0:2], roi[2:4])
-            cv2.rectangle(cropped, p1, p2, (127, 255, 0), 1)
+            cv2.rectangle(cropped, p1, p2, (127, 255, 0), 2)
             font = cv2.FONT_HERSHEY_SIMPLEX
-            cv2.putText(cropped, '{:.4f}'.format(roi[4]), (p1[0]+2, p2[1]-2), font, 0.33, (255, 0, 0))
-        imsave('{}/{:02d}.png'.format(out_dir, idx), cropped)
+            cv2.putText(cropped, '{:.2f}'.format(roi[4]), (p1[0]+2, p2[1]-2), font, 0.5, (255, 0, 0))
+        imsave('{}/{:04d}.png'.format(out_dir, idx), cropped)
 
-    def _select_final_rois(self, roi_list, overlap_th=0.2, min_sum_score=0.0):
+    def _select_final_rois(self, roi_list, overlap_th=0.4, min_sum_score=3.0):
         boxes = np.array(roi_list)
 
          # code based on: https://www.pyimagesearch.com/2015/02/16/faster-non-maximum-suppression-python/
@@ -90,8 +95,8 @@ class Detector(object):
             if np.any(above_th):
                 above_idxs = idxs[:last][above_th]
                 boxes[i, 4] = np.sum(boxes[above_idxs, 4])
-                # for k in range(4):
-                    # boxes[i, k] = np.mean(boxes[above_idxs, k])
+                for k in range(4):
+                    boxes[i, k] = np.mean(boxes[above_idxs, k])
 
             wh = np.where(above_th)[0]
             idxs = np.delete(idxs, np.concatenate(([last], wh)))

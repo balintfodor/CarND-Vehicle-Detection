@@ -72,7 +72,7 @@ class Trainer(object):
             pixels_per_cell=self.pixels_per_cell,
             cells_per_block=self.cells_per_block,
             block_norm='L2-Hys',
-            transform_sqrt=True,
+            transform_sqrt=False,
             feature_vector=False)
         hog_map = hog_map.reshape((hog_map.shape[0], hog_map.shape[1], -1))
         return hog_map
@@ -85,7 +85,7 @@ class Trainer(object):
         blocks = view_as_windows(gray,
             window_shape=win_shape,
             step=step)
-        hist_map = np.empty((blocks.shape[0], blocks.shape[1], 4 * self.color_hist_bins), dtype=gray.dtype)
+        hist_map = np.empty((blocks.shape[0], blocks.shape[1], 2 * self.color_hist_bins), dtype=gray.dtype)
         for i in range(blocks.shape[0]):
             for j in range(blocks.shape[1]):
                 block = np.copy(blocks[i, j]).astype(np.float64)
@@ -97,20 +97,22 @@ class Trainer(object):
 
                 hist_sorted = np.sort(hist)
 
-                block_grad = sobel(block)
-                grad_hist = np.histogram(block_grad, bins=self.color_hist_bins, range=ranges)[0].astype(np.float64)
+                # block_grad = sobel(block)
+                # grad_hist = np.histogram(block_grad, bins=self.color_hist_bins, range=ranges)[0].astype(np.float64)
 
-                grad_hist /= np.linalg.norm(grad_hist)
-                grad_hist = np.maximum(0.2, grad_hist)
-                grad_hist /= np.linalg.norm(grad_hist)
+                # grad_hist /= np.linalg.norm(grad_hist)
+                # grad_hist = np.maximum(0.2, grad_hist)
+                # grad_hist /= np.linalg.norm(grad_hist)
 
-                grad_hist_sorted = np.sort(grad_hist)
+                # grad_hist_sorted = np.sort(grad_hist)
 
-                hist_map[i, j] = np.concatenate((hist, hist_sorted, grad_hist, grad_hist_sorted), axis=0)
+                # hist_map[i, j] = np.concatenate((hist, hist_sorted, grad_hist, grad_hist_sorted), axis=0)
+                hist_map[i, j] = np.concatenate((hist, hist_sorted), axis=0)
         return hist_map
 
     def image_to_feat_map(self, image):
-        col_conv = rgb2hsv(image)
+        col_conv = rgb2yuv(image)
+        col_conv[:, :, 1:] += 0.5
         feat_layers = []
         for i in range(3):
             hist_layer = self._hist_map(col_conv[:, :, i])
@@ -163,7 +165,7 @@ class Trainer(object):
             fit_intercept=True,
             verbose=1)
 
-        clf = BaggingClassifier(clf, n_estimators=5, max_samples=1, max_features=0.2)
+        # clf = BaggingClassifier(clf, n_estimators=50, max_samples=1, max_features=0.02)
 
         clf.fit(X_train, y_train)
 
